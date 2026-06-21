@@ -1,0 +1,33 @@
+# Antiderivative Operator — G(u)(x) = integral_0^x u(t) dt
+
+data:
+  n_train: 1000          # number of ICs (input functions) for training
+  n_test: 200
+  m: 100                 # number of sensor points (branch net input size)
+  p_per_u: 100           # query points sampled per IC
+  x_range: [0.0, 1.0]
+  grf:
+    length_scale: 0.2    # controls smoothness of GRF samples
+
+model:
+  p: 128                 # trunk/branch output dimension (dot product dim)
+  branch:
+    hidden_dims: [128, 128, 128]
+    activation: tanh
+  trunk:
+    hidden_dims: [128, 128, 128]
+    activation: tanh
+
+training:
+  epochs: 50000
+  batch_size: 10000      # triplets per batch
+  lr: 1.0e-3
+  lr_scheduler:
+    type: cosine
+    min_lr: 1.0e-5
+  log_every: 1000
+  save_every: 5000
+
+output:
+  checkpoint_dir: checkpoints/antiderivative
+  results_dir: results/antiderivative
