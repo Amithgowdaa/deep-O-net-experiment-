@@ -8,7 +8,6 @@ import os
 import time
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
 from typing import Dict, Any
 
 from training.losses import get_loss
@@ -63,19 +62,22 @@ class Trainer:
 
         self.history = {"train_loss": [], "test_loss": [], "epoch": []}
 
-    def _make_loader(self, branch, trunk, target, shuffle=True) -> DataLoader:
-        dataset = TensorDataset(
-            torch.tensor(branch, dtype=torch.float32),
-            torch.tensor(trunk,  dtype=torch.float32),
-            torch.tensor(target, dtype=torch.float32),
+    def _to_gpu(self, branch, trunk, target):
+        """Move entire dataset to GPU once — avoids per-batch CPU→GPU transfer."""
+        return (
+            torch.tensor(branch, dtype=torch.float32).to(self.device),
+            torch.tensor(trunk,  dtype=torch.float32).to(self.device),
+            torch.tensor(target, dtype=torch.float32).to(self.device),
         )
-        return DataLoader(
-            dataset,
-            batch_size=self.config["training"]["batch_size"],
-            shuffle=shuffle,
-            pin_memory=(self.device.type == "cuda"),
-            num_workers=0,
-        )
+
+    def _iter_batches(self, branch, trunk, target, shuffle=True):
+        """Yield batches from GPU tensors directly — no DataLoader overhead."""
+        n = len(branch)
+        batch_size = self.config["training"]["batch_size"]
+        idx = torch.randperm(n, device=self.device) if shuffle else torch.arange(n, device=self.device)
+        for start in range(0, n, batch_size):
+            b = idx[start:start + batch_size]
+            yield branch[b], trunk[b], target[b]
 
     def train(self, train_data, test_data):
         """
@@ -83,8 +85,11 @@ class Trainer:
             train_data: tuple (branch, trunk, target) — numpy arrays
             test_data:  tuple (branch, trunk, target) — numpy arrays
         """
-        train_loader = self._make_loader(*train_data)
-        test_loader  = self._make_loader(*test_data, shuffle=False)
+        print("Moving data to GPU...")
+        branch_tr, trunk_tr, target_tr = self._to_gpu(*train_data)
+        branch_te, trunk_te, target_te = self._to_gpu(*test_data)
+
+        n_train_batches = (len(branch_tr) + self.config["training"]["batch_size"] - 1) // self.config["training"]["batch_size"]
 
         print(f"Training on {self.device} | "
               f"{self.config['training']['epochs']} epochs | "
@@ -92,39 +97,35 @@ class Trainer:
         print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         print("-" * 60)
 
+        t_start = time.time()
+
         for epoch in range(1, self.epochs + 1):
             self.model.train()
             epoch_loss = 0.0
-            t0 = time.time()
 
-            for branch_b, trunk_b, target_b in train_loader:
-                branch_b = branch_b.to(self.device)
-                trunk_b  = trunk_b.to(self.device)
-                target_b = target_b.to(self.device)
-
+            for branch_b, trunk_b, target_b in self._iter_batches(branch_tr, trunk_tr, target_tr):
                 self.optimizer.zero_grad()
                 pred = self.model(branch_b, trunk_b)
                 loss = self.loss_fn(pred, target_b)
                 loss.backward()
                 self.optimizer.step()
-
                 epoch_loss += loss.item()
 
             if self.scheduler is not None:
                 self.scheduler.step()
 
-            avg_train_loss = epoch_loss / len(train_loader)
+            avg_train_loss = epoch_loss / n_train_batches
 
             if epoch % self.log_every == 0:
-                test_loss = self._evaluate(test_loader)
+                test_loss = self._evaluate(branch_te, trunk_te, target_te)
                 lr = self.optimizer.param_groups[0]["lr"]
-                elapsed = time.time() - t0
+                elapsed = time.time() - t_start
 
                 print(f"Epoch {epoch:6d} | "
                       f"Train MSE: {avg_train_loss:.4e} | "
                       f"Test RelL2: {test_loss:.4e} | "
                       f"LR: {lr:.2e} | "
-                      f"Time: {elapsed:.1f}s")
+                      f"Elapsed: {elapsed:.1f}s")
 
                 self.history["epoch"].append(epoch)
                 self.history["train_loss"].append(avg_train_loss)
@@ -138,18 +139,11 @@ class Trainer:
         return self.history
 
     @torch.no_grad()
-    def _evaluate(self, loader: DataLoader) -> float:
+    def _evaluate(self, branch, trunk, target) -> float:
         self.model.eval()
-        preds, targets = [], []
-        for branch_b, trunk_b, target_b in loader:
-            branch_b = branch_b.to(self.device)
-            trunk_b  = trunk_b.to(self.device)
-            pred = self.model(branch_b, trunk_b).cpu()
-            preds.append(pred)
-            targets.append(target_b)
-        preds   = torch.cat(preds)
-        targets = torch.cat(targets)
-        return self.eval_loss_fn(preds, targets).item()
+        pred = self.model(branch, trunk)
+        self.model.train()
+        return self.eval_loss_fn(pred, target).item()
 
     def _save_checkpoint(self, epoch: int, final: bool = False):
         name = "final.pt" if final else f"epoch_{epoch:06d}.pt"
