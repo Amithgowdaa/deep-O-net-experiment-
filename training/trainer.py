@@ -74,7 +74,7 @@ class Trainer:
             batch_size=self.config["training"]["batch_size"],
             shuffle=shuffle,
             pin_memory=(self.device.type == "cuda"),
-            num_workers=2,
+            num_workers=0,
         )
 
     def train(self, train_data, test_data):
