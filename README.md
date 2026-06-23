@@ -18,10 +18,7 @@ notebooks/        # Thin Kaggle runner notebooks
 |---|---|---|
 | antiderivative | G(u)(x) = ∫₀ˣ u(t)dt | 🔄 in progress |
 
-## Kaggle Workflow
-1. Add this repo as a Kaggle dataset
-2. Open `notebooks/kaggle_runner.ipynb`
-3. Run — outputs and checkpoints auto-push to GitHub
+
 
 ## References
 - Lu et al. 2021 — Learning nonlinear operators via DeepONet
