@@ -19,7 +19,7 @@ model:
     activation: tanh
 
 training:
-  epochs: 50000
+  epochs: 15000
   batch_size: 10000      # triplets per batch
   lr: 1.0e-3
   lr_scheduler:
